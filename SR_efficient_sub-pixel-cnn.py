@@ -62,12 +62,23 @@ valid_ds = valid_ds.prefetch(buffer_size=32)
 #    for img in batch[1]:
 #        display(array_to_img(img))
 
+def SR(inputs):
+    x = layers.Conv2D(512, 3, padding='same')(inputs)
+    x = layers.LeakyReLU(alpha=0.3)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Conv2D(512, 3, padding='same')(x)
+    x = layers.LeakyReLU(alpha=0.3)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Lambda(lambda y: tf.reduce_sum(y, axis=-1, keepdims=True))(x)  # Element wise sum
+    return x 
+
 def get_model(upscale_factor=3, channels=1):
-    conv_args = {"activation": "relu", "kernel_initializer": "Orthogonal", "padding": "same",}
+    conv_args = {"kernel_initializer": "Orthogonal", "padding": "same",}
     inputs = keras.Input(shape=(None, None, channels))
-    x = layers.Conv2D(64, 5, **conv_args)(inputs)
-    x = layers.Conv2D(64, 3, **conv_args)(x)
-    x = layers.Conv2D(32, 3, **conv_args)(x)
+    x = layers.Conv2D(512, 5, **conv_args)(inputs)
+    x = layers.LeakyReLU(alpha=0.3)(x)
+    for _ in range(7):
+        x = SR(x)
     x = layers.Conv2D(channels * (upscale_factor ** 2), 3, **conv_args)(x)
     outputs = tf.nn.depth_to_space(x, upscale_factor)
 
@@ -136,6 +147,9 @@ def upscale_image(model, img):
     out_img = PIL.Image.merge("YCbCr", (out_img_y, out_img_cb, out_img_cr)).convert("RGB")
     return out_img
 	
+def ssim_metric(y_true, y_pred):
+    return tf.image.ssim(y_true, y_pred, max_val=1.0)
+	
 class ESPCNCallback(keras.callbacks.Callback):
     def __init__(self):
         super().__init__()
@@ -173,7 +187,7 @@ optimizer = keras.optimizers.Adam(learning_rate=0.001)
 #    plt.show()
 
 epochs = 100
-model.compile(optimizer=optimizer, loss=loss_fn,)
+model.compile(optimizer=optimizer, loss=loss_fn, metrics=[ssim_metric])
 model.fit(train_ds, epochs=epochs, callbacks=callbacks, validation_data=valid_ds, verbose=2)
 # The model weights (that are considered the best) are loaded into the model.
 model.load_weights(checkpoint_filepath)
